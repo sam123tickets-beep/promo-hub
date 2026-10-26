@@ -126,3 +126,8 @@ a.bad { text-decoration: none; }
 .card:not(.detail) .actions { flex-wrap: nowrap; gap: 6px; }
 .card:not(.detail) .actions .btn { padding: 10px 12px; white-space: nowrap; }
 .card:not(.detail) .actions .btn.icon { padding: 8px 0; min-width: 40px; }
+dialog.sheet { border: 1px solid var(--line); border-radius: 16px; background: var(--card); color: var(--ink); padding: 20px; width: min(92vw, 420px); }
+dialog.sheet::backdrop { background: rgba(0,0,0,.5); }
+dialog.sheet h2 { margin: 0 0 4px; }
+dialog.sheet .btn { display: flex; width: 100%; margin-top: 10px; white-space: normal; text-align: center; overflow-wrap: anywhere; }
+dialog.sheet .linkish { justify-content: center; }
