@@ -88,6 +88,30 @@ function normDomain(s) {
   return parts.slice(-2).join(".");
 }
 
+// "Not a promo" choices. Resolves to "none" | "address" | "domain", or null if cancelled.
+function askNotPromo(sender) {
+  const domain = sender && sender.includes("@") ? normDomain(sender) : "";
+  return new Promise((resolve) => {
+    const dlg = document.createElement("dialog");
+    dlg.className = "sheet";
+    dlg.innerHTML = `
+      <h2>Not a promo</h2>
+      <p class="muted small">The hub will remember this and skip emails like it.</p>
+      <button class="btn primary" value="none">Skip emails like this one</button>
+      ${sender ? `<button class="btn" value="address">Block everything from ${esc(sender)}</button>` : ""}
+      ${domain ? `<button class="btn" value="domain">Block everything from ${esc(domain)}</button>` : ""}
+      <button class="btn linkish" value="">Cancel</button>`;
+    document.body.appendChild(dlg);
+    dlg.addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (b) { dlg.close(); dlg.remove(); resolve(b.value || null); }
+      else if (e.target === dlg) { dlg.close(); dlg.remove(); resolve(null); }
+    });
+    dlg.addEventListener("cancel", () => { dlg.remove(); resolve(null); });
+    dlg.showModal();
+  });
+}
+
 // ---------- routing ----------
 function route() {
   const h = location.hash.replace(/^#/, "") || "/";
@@ -108,7 +132,6 @@ async function render() {
     if (path === "/") await renderPromos(params.get("view") || "active");
     else if (path.startsWith("/promo/")) await renderPromo(Number(path.split("/")[2]));
     else if (path === "/filtered") await renderFiltered();
-    else if (path === "/venues") await renderVenues();
     else if (path === "/settings") await renderSettings();
     else location.hash = "#/";
   } catch (e) {
@@ -189,8 +212,8 @@ function promoCard(p) {
     <p class="snippet">${esc(p.snippet)}</p>
     <div class="actions">
       ${p.primary_link ? `<a class="btn primary" href="${safeUrl(p.primary_link)}" target="_blank" rel="noopener noreferrer">Get tickets ↗</a>` : ""}
-      <a class="btn" href="#/promo/${p.id}">Details</a>
       <span class="spacer"></span>
+      <button class="btn icon" data-notpromo="${p.id}" data-sender="${esc(p.sender_email || "")}" title="Not a promo" aria-label="Not a promo">✕</button>
       <button class="btn icon star ${p.starred ? "on" : ""}" data-star="${p.id}" title="Star">★</button>
       <button class="btn icon" data-archive="${p.id}" data-to="${p.archived ? 0 : 1}" title="${p.archived ? "Restore" : "Done — move to Archived"}" aria-label="${p.archived ? "Restore" : "Mark done"}">${p.archived ? "↩" : "✓"}</button>
     </div>
@@ -199,7 +222,7 @@ function promoCard(p) {
 }
 
 async function renderPromos(view) {
-  let q = sb.from("promos").select("id,title,sender_name,sender_domain,codes,snippet,primary_link,when_text,first_seen,sightings,starred,archived")
+  let q = sb.from("promos").select("id,title,sender_name,sender_domain,sender_email,codes,snippet,primary_link,when_text,first_seen,sightings,starred,archived")
     .order("first_seen", { ascending: false }).limit(200);
   q = view === "starred" ? q.eq("starred", true) : q.eq("archived", view === "archived");
   const [promos, accounts] = await Promise.all([must(q), must(sb.from("accounts").select("id,enabled,last_checked,last_error"))]);
@@ -256,6 +279,7 @@ async function renderPromo(id) {
       ${p.primary_link ? `<a class="btn primary" href="${safeUrl(p.primary_link)}" target="_blank" rel="noopener noreferrer">Get tickets ↗</a>` : ""}
       <button class="btn star ${p.starred ? "on" : ""}" data-star="${p.id}">★ Star</button>
       <button class="btn" id="resend">Re-send alert</button>
+      <button class="btn danger" data-notpromo="${p.id}" data-sender="${esc(p.sender_email || "")}">Not a promo</button>
     </div>
     <h3>Full email</h3>
     <pre class="body">${esc(p.body_text)}</pre>
@@ -278,7 +302,7 @@ async function renderFiltered() {
   const rows = await must(sb.from("filtered").select("id,sender_name,sender_email,subject,score,reasons,received_at,accounts(label)").order("id", { ascending: false }).limit(150));
   app.innerHTML = `
   <h1>Filtered out</h1>
-  <p class="muted">Emails that came in but didn't look like promos. If one should have counted, tap <b>It's a promo</b> — it moves to your feed and that sender is trusted from now on.</p>
+  <p class="muted">Emails that came in but didn't look like promos. If one should have counted, tap <b>It's a promo</b>: it moves to your feed, and the hub learns to let that kind of email through. To teach it the other way, tap <b>✕ Not a promo</b> on any promo.</p>
   ${rows.map((r) => `
     <div class="row">
       <div class="grow">
@@ -340,13 +364,16 @@ async function renderVenues() {
 
 // ---------- settings ----------
 async function renderSettings() {
-  const [accounts, phones, senders, settingsRows, status] = await Promise.all([
+  const [accounts, phones, senders, settingsRows, status, blocked, fbCounts] = await Promise.all([
     must(sb.from("accounts").select("*").order("id")),
     must(sb.from("phones").select("*").order("id")),
     must(sb.from("senders").select("*").order("domain")),
     must(sb.from("settings").select("*")),
     action("status").catch(() => ({ twilio: false })),
+    must(sb.from("blocked_senders").select("*").order("pattern")),
+    must(sb.from("feedback").select("is_promo")),
   ]);
+  const learnedYes = fbCounts.filter((r) => r.is_promo).length, learnedNo = fbCounts.length - learnedYes;
   const s = Object.fromEntries(settingsRows.map((r) => [r.key, r.value ?? ""]));
   const suggestedUrl = location.origin + location.pathname.replace(/index\.html$/, "");
 
@@ -439,6 +466,16 @@ async function renderSettings() {
     <div class="chips">${senders.map((d) => `<span class="chip" title="${esc(d.note || "")}">${esc(d.domain)} <button data-delsender="${d.id}" aria-label="Remove ${esc(d.domain)}">×</button></span>`).join("")}</div>
   </section>
 
+  <section class="panel" id="blocked">
+    <h2>Blocked senders &amp; learning</h2>
+    <p class="muted">The hub has learned from <b>${learnedYes}</b> email${learnedYes === 1 ? "" : "s"} you marked as promos and <b>${learnedNo}</b> you marked as not promos. Emails from blocked senders never show up.</p>
+    <form class="inline" id="addBlocked">
+      <input name="pattern" required placeholder="someone@example.com or example.com">
+      <button class="btn">Block</button>
+    </form>
+    <div class="chips">${blocked.map((b) => `<span class="chip" title="${esc(b.note || "")}">${esc(b.pattern)} <button data-delblocked="${b.id}" aria-label="Unblock ${esc(b.pattern)}">×</button></span>`).join("") || `<span class="muted small">Nobody blocked yet.</span>`}</div>
+  </section>
+
   <p class="muted small">Signed in as ${esc(session.user.email)} · <a href="#" id="signout">Sign out</a></p>`;
 
   const on = (id, ev, fn) => document.getElementById(id).addEventListener(ev, fn);
@@ -484,6 +521,15 @@ async function renderSettings() {
     toast(`Trusting ${domain}`);
     render();
   });
+  on("addBlocked", "submit", async (e) => {
+    e.preventDefault();
+    let v = e.target.pattern.value.trim().toLowerCase();
+    if (!v.includes("@")) v = normDomain(v);
+    if (!v.includes(".")) return toast("Enter an email address or a domain like example.com", true);
+    await must(sb.from("blocked_senders").upsert({ pattern: v, note: "added by you" }, { onConflict: "pattern", ignoreDuplicates: true }));
+    toast(`Blocked ${v}`);
+    render();
+  });
   on("signout", "click", (e) => { e.preventDefault(); sb.auth.signOut(); });
 }
 
@@ -514,6 +560,18 @@ document.addEventListener("click", async (e) => {
     await must(sb.from("promos").update({ archived: d.to === "1" }).eq("id", Number(d.archive)));
     card.style.opacity = "0";
     setTimeout(() => card.remove(), 200);
+    return;
+  }
+  if (d.notpromo) {
+    const choice = await askNotPromo(d.sender);
+    if (!choice) return;
+    const card = t.closest("[data-id]");
+    busy(t, true, "…");
+    try {
+      await action("not_promo", { promo_id: Number(d.notpromo), block: choice });
+      if (card && !card.classList.contains("detail")) { card.style.opacity = "0"; setTimeout(() => card.remove(), 200); }
+      else location.hash = "#/";
+    } catch { busy(t, false); }
     return;
   }
   if (d.promote) {
@@ -551,6 +609,7 @@ document.addEventListener("click", async (e) => {
   if (d.testsms) { busy(t, true, "Sending…"); try { await action("test_sms", { phone_id: Number(d.testsms) }); } finally { busy(t, false); } return; }
   if (d.togglephone) { await must(sb.from("phones").update({ enabled: d.enabled !== "1" }).eq("id", Number(d.togglephone))); return render(); }
   if (d.delphone) { await must(sb.from("phones").delete().eq("id", Number(d.delphone))); return render(); }
+  if (d.delblocked) { await must(sb.from("blocked_senders").delete().eq("id", Number(d.delblocked))); return render(); }
   if (d.delsender) { await must(sb.from("senders").delete().eq("id", Number(d.delsender))); return render(); }
 });
 
