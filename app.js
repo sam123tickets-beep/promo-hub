@@ -130,8 +130,6 @@ function renderLogin() {
     <label>Email<input name="email" type="email" required autocomplete="email"></label>
     <label>Password<input name="password" type="password" required minlength="8" autocomplete="current-password"></label>
     <button class="btn primary" name="signin">Sign in</button>
-    <button class="btn" type="button" id="signup">First time? Create the owner account</button>
-    <p class="muted small">The first account created becomes the hub's owner. After that, turn off new sign-ups in Supabase.</p>
   </form>`;
   const form = document.getElementById("login");
   form.addEventListener("submit", async (e) => {
@@ -142,20 +140,11 @@ function renderLogin() {
     busy(btn, false);
     if (error) toast(error.message, true);
   });
-  document.getElementById("signup").addEventListener("click", async () => {
-    if (!form.reportValidity()) return;
-    const { data, error } = await sb.auth.signUp({
-      email: form.email.value, password: form.password.value,
-      options: { emailRedirectTo: location.origin + location.pathname },
-    });
-    if (error) return toast(error.message, true);
-    if (!data.session) toast("Check your email to confirm the account, then sign in.");
-  });
 }
 
 function renderNoAccess() {
   nav.hidden = true;
-  app.innerHTML = `<div class="card login"><h1>No access</h1><p>This hub already has an owner, and it isn't ${esc(session.user.email)}.</p><button class="btn" id="out">Sign out</button></div>`;
+  app.innerHTML = `<div class="card login"><h1>No access</h1><p>${esc(session.user.email)} isn't on this hub's access list.</p><button class="btn" id="out">Sign out</button></div>`;
   document.getElementById("out").onclick = () => sb.auth.signOut();
 }
 
