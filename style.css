@@ -131,3 +131,14 @@ dialog.sheet::backdrop { background: rgba(0,0,0,.5); }
 dialog.sheet h2 { margin: 0 0 4px; }
 dialog.sheet .btn { display: flex; width: 100%; margin-top: 10px; white-space: normal; text-align: center; overflow-wrap: anywhere; }
 dialog.sheet .linkish { justify-content: center; }
+.foot.inbox b { color: var(--ink); }
+.lb-head { display: flex; align-items: center; gap: 12px; }
+.lb-rank { font-size: 28px; width: 40px; text-align: center; }
+.lb-name { font-weight: 700; font-size: 18px; }
+.lb-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 0 6px; }
+.lb-stats div { background: var(--bg); border-radius: 10px; padding: 10px; text-align: center; }
+.lb-stats b { display: block; font-size: 22px; }
+.lb-stats span { font-size: 12px; color: var(--muted); }
+.lb details { margin-top: 8px; }
+.lb summary { cursor: pointer; list-style: none; }
+.chip.miss { border-style: dashed; color: var(--muted); }
