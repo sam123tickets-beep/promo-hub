@@ -8,6 +8,7 @@ let session = null;
 let isOwner = false;
 let live = null;
 let currentRoute = "";
+let inboxNames = {};
 
 // ---------- small helpers ----------
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -132,6 +133,7 @@ async function render() {
     if (path === "/") await renderPromos(params.get("view") || "active");
     else if (path.startsWith("/promo/")) await renderPromo(Number(path.split("/")[2]));
     else if (path === "/filtered") await renderFiltered();
+    else if (path === "/leaderboard") await renderLeaderboard();
     else if (path === "/settings") await renderSettings();
     else location.hash = "#/";
   } catch (e) {
@@ -198,6 +200,15 @@ function stopLive() { if (live) { sb.removeChannel(live); live = null; } }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) document.title = "Promo Hub"; });
 
 // ---------- promos ----------
+// "Inbox: Sam" or "Inbox: Sam first · also Hank, Shlot"
+function inboxLine(p) {
+  const seen = [...(p.seen || [])].sort((a, b) => a.id - b.id);
+  const names = [...new Set(seen.map((s) => inboxNames[s.account_id] || "removed inbox"))];
+  if (!names.length) return "";
+  if (names.length === 1) return `<div class="foot inbox">📥 Inbox: <b>${esc(names[0])}</b></div>`;
+  return `<div class="foot inbox">📥 <b>${esc(names[0])}</b> got it first · also ${esc(names.slice(1).join(", "))}</div>`;
+}
+
 function promoCard(p) {
   const codes = p.codes?.length
     ? p.codes.map((c) => `<button class="code" data-copy="${esc(c)}" aria-label="Copy code ${esc(c)}">${esc(c)}<span>Copy</span></button>`).join("")
@@ -217,15 +228,16 @@ function promoCard(p) {
       <button class="btn icon star ${p.starred ? "on" : ""}" data-star="${p.id}" title="Star">★</button>
       <button class="btn icon" data-archive="${p.id}" data-to="${p.archived ? 0 : 1}" title="${p.archived ? "Restore" : "Done — move to Archived"}" aria-label="${p.archived ? "Restore" : "Mark done"}">${p.archived ? "↩" : "✓"}</button>
     </div>
-    ${p.sightings > 1 ? `<div class="foot">Arrived in ${p.sightings} inboxes — shown once</div>` : ""}
+    ${inboxLine(p)}
   </article>`;
 }
 
 async function renderPromos(view) {
-  let q = sb.from("promos").select("id,title,sender_name,sender_domain,sender_email,codes,snippet,primary_link,when_text,first_seen,sightings,starred,archived")
+  let q = sb.from("promos").select("id,title,sender_name,sender_domain,sender_email,codes,snippet,primary_link,when_text,first_seen,sightings,starred,archived,seen:sightings(account_id,received_at,id)")
     .order("first_seen", { ascending: false }).limit(200);
   q = view === "starred" ? q.eq("starred", true) : q.eq("archived", view === "archived");
-  const [promos, accounts] = await Promise.all([must(q), must(sb.from("accounts").select("id,enabled,last_checked,last_error"))]);
+  const [promos, accounts] = await Promise.all([must(q), must(sb.from("accounts").select("id,label,email,enabled,last_checked,last_error"))]);
+  inboxNames = Object.fromEntries(accounts.map((a) => [a.id, a.label || a.email]));
   const watched = accounts.filter((a) => a.enabled);
   const broken = watched.filter((a) => a.last_error);
   const lastChecked = watched.map((a) => a.last_checked).filter(Boolean).sort().at(-1);
@@ -295,6 +307,57 @@ async function renderPromo(id) {
     await must(sb.from("promos").delete().eq("id", id));
     location.hash = "#/";
   };
+}
+
+// ---------- leaderboard ----------
+async function renderLeaderboard() {
+  const [accounts, senders, seen] = await Promise.all([
+    must(sb.from("accounts").select("id,label,email,enabled").order("id")),
+    must(sb.from("inbox_senders").select("*").order("emails", { ascending: false })),
+    must(sb.from("sightings").select("promo_id,account_id,id").order("id").limit(10000)),
+  ]);
+  const firstBy = {};
+  for (const s of seen) if (!(s.promo_id in firstBy)) firstBy[s.promo_id] = s.account_id;
+  const allDomains = new Set(senders.map((r) => r.sender_domain));
+  const rows = accounts.map((a) => {
+    const mine = senders.filter((r) => r.account_id === a.id);
+    const have = new Set(mine.map((r) => r.sender_domain));
+    return {
+      a, mine,
+      newsletters: have.size,
+      promos: new Set(seen.filter((s) => s.account_id === a.id).map((s) => s.promo_id)).size,
+      first: Object.values(firstBy).filter((id) => id === a.id).length,
+      missing: [...allDomains].filter((d) => !have.has(d)).sort(),
+    };
+  }).sort((x, y) => y.newsletters - x.newsletters || y.promos - x.promos);
+  const medal = ["🥇", "🥈", "🥉"];
+
+  app.innerHTML = `
+  <h1>Leaderboard</h1>
+  <p class="muted">Ranked by how many different newsletters are actually arriving in each inbox. A sign-up only counts once its first email shows up. <b>${allDomains.size}</b> different newsletters so far across all inboxes.</p>
+  ${rows.map((r, i) => `
+    <div class="panel lb">
+      <div class="lb-head">
+        <div class="lb-rank">${medal[i] || "#" + (i + 1)}</div>
+        <div class="grow">
+          <div class="lb-name">${esc(r.a.label || r.a.email)}</div>
+          <div class="muted small">${esc(r.a.email)}${r.a.enabled ? "" : " · paused"}</div>
+        </div>
+      </div>
+      <div class="lb-stats">
+        <div><b>${r.newsletters}</b><span>newsletters</span></div>
+        <div><b>${r.promos}</b><span>promos caught</span></div>
+        <div><b>${r.first}</b><span>got it first</span></div>
+      </div>
+      <details>
+        <summary class="linkish">Newsletters arriving (${r.newsletters})</summary>
+        <div class="chips">${r.mine.map((m) => `<span class="chip" title="${m.emails} emails · ${m.promos} promos">${esc(m.sender_domain)} <span class="muted">${m.emails}</span></span>`).join("") || `<span class="muted small">None yet.</span>`}</div>
+      </details>
+      ${r.missing.length ? `<details>
+        <summary class="linkish">Missing ${r.missing.length} that other inboxes get</summary>
+        <div class="chips">${r.missing.map((d) => `<span class="chip miss">${esc(d)}</span>`).join("")}</div>
+      </details>` : ""}
+    </div>`).join("") || `<div class="empty"><p>Connect inboxes in Settings to start the leaderboard.</p></div>`}`;
 }
 
 // ---------- filtered ----------
