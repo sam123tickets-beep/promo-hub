@@ -114,6 +114,32 @@ function askNotPromo(sender) {
   });
 }
 
+// Asks for the secret code before pausing/removing an inbox. Resolves to { pin, revoke } or null.
+function askPin({ title, note, confirm, danger = false, revokeFor = "" }) {
+  return new Promise((resolve) => {
+    const dlg = document.createElement("dialog");
+    dlg.className = "sheet";
+    dlg.innerHTML = `
+      <form method="dialog" class="stack">
+        <h2>${esc(title)}</h2>
+        ${note ? `<p class="muted small">${esc(note)}</p>` : ""}
+        <label>Secret code<input name="pin" type="password" inputmode="numeric" autocomplete="off" required autofocus></label>
+        ${revokeFor ? `<label class="check"><input type="checkbox" name="revoke"> Also remove ${esc(revokeFor)}'s login, so they can't open Promohub</label>` : ""}
+        <button class="btn ${danger ? "danger-fill" : "primary"}" value="ok">${esc(confirm)}</button>
+        <button class="btn linkish" value="" formnovalidate>Cancel</button>
+      </form>`;
+    document.body.appendChild(dlg);
+    const form = dlg.querySelector("form");
+    dlg.addEventListener("close", () => {
+      const ok = dlg.returnValue === "ok";
+      const out = ok ? { pin: form.pin.value, revoke: !!form.revoke?.checked } : null;
+      dlg.remove();
+      resolve(out);
+    });
+    dlg.showModal();
+  });
+}
+
 // Shows the original email exactly as it was sent (safely, in a sandbox), with a plain-text switch.
 function emailViewer(html, text) {
   const hasHtml = !!(html && html.trim());
@@ -157,7 +183,7 @@ async function render() {
   const section = path.startsWith("/promo") || path === "/" ? "promos" : path.split("/")[1];
   nav.querySelectorAll("a").forEach((a) => a.classList.toggle("on", a.dataset.nav === section));
   try {
-    if (path === "/") await renderPromos(params.get("view") || "active");
+    if (path === "/") await renderPromos();
     else if (path.startsWith("/promo/")) await renderPromo(Number(path.split("/")[2]));
     else if (path === "/filtered") await renderFiltered();
     else if (path.startsWith("/filtered/")) await renderFilteredEmail(Number(path.split("/")[2]));
@@ -243,6 +269,14 @@ function inboxLine(p) {
   return `<p class="via">${icon}<span><b>${esc(names[0])}</b>${names.length > 1 ? " got it first" : "'s inbox"}${rest}</span></p>`;
 }
 
+// "New" for the first hour after a promo arrives.
+const NEW_MS = 60 * 60 * 1000;
+function newBadge(ts) {
+  const until = new Date(ts).getTime() + NEW_MS;
+  return until > Date.now() ? `<span class="badge-new" data-until="${until}">New</span>` : "";
+}
+setInterval(() => document.querySelectorAll(".badge-new").forEach((b) => { if (+b.dataset.until < Date.now()) b.remove(); }), 30000);
+
 function stub(p, big = false) {
   if (!p.codes?.length) {
     return `<div class="t-stub none"><span class="stub-label">No code needed</span><span class="stub-hint">The link is all you need</span></div>`;
@@ -258,9 +292,9 @@ function stub(p, big = false) {
 function promoCard(p) {
   const search = [p.title, p.sender_name, p.sender_domain, ...(p.codes || [])].join(" ").toLowerCase();
   return `
-  <article class="ticket ${p.starred ? "starred" : ""} ${p.id > seenMaxId && seenMaxId ? "fresh" : ""}" data-id="${p.id}" data-search="${esc(search)}">
+  <article class="ticket ${p.id > seenMaxId && seenMaxId ? "fresh" : ""}" data-id="${p.id}" data-search="${esc(search)}">
     <div class="t-main">
-      <div class="t-meta"><span class="src">${esc(p.sender_name || p.sender_domain)}</span>${time(p.first_seen)}</div>
+      <div class="t-meta"><span class="src">${newBadge(p.first_seen)}${esc(p.sender_name || p.sender_domain)}</span>${time(p.first_seen)}</div>
       <h2><a href="#/promo/${p.id}">${esc(p.title)}</a></h2>
       ${p.when_text ? `<p class="when"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>${esc(p.when_text)}</p>` : ""}
       <p class="snippet">${esc(p.snippet)}</p>
@@ -268,8 +302,6 @@ function promoCard(p) {
         ${copyAndGo(p)}
         <div class="icons">
           <button class="btn icon" data-notpromo="${p.id}" data-sender="${esc(p.sender_email || "")}" title="Not a promo" aria-label="Not a promo"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-          <button class="btn icon star ${p.starred ? "on" : ""}" data-star="${p.id}" title="Star" aria-label="Star"><svg viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg></button>
-          <button class="btn icon" data-archive="${p.id}" data-to="${p.archived ? 0 : 1}" title="${p.archived ? "Move back to Active" : "Done: move to Archived"}" aria-label="${p.archived ? "Restore" : "Mark done"}">${p.archived ? `<svg viewBox="0 0 24 24"><path d="M9 14l-5-5 5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg>` : `<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`}</button>
         </div>
       </div>
       ${inboxLine(p)}
@@ -278,49 +310,38 @@ function promoCard(p) {
   </article>`;
 }
 
-async function renderPromos(view) {
-  let q = sb.from("promos").select("id,title,sender_name,sender_domain,sender_email,codes,snippet,primary_link,when_text,first_seen,sightings,starred,archived,seen:sightings(account_id,received_at,id)")
-    .order("first_seen", { ascending: false }).limit(200);
-  q = view === "starred" ? q.eq("starred", true) : q.eq("archived", view === "archived");
-  const [promos, accounts] = await Promise.all([must(q), must(sb.from("accounts").select("id,label,email,enabled,last_checked,last_error"))]);
+async function renderPromos() {
+  const [promos, accounts, filteredCount] = await Promise.all([
+    must(sb.from("promos").select("id,title,sender_name,sender_domain,sender_email,codes,snippet,primary_link,when_text,first_seen,sightings,seen:sightings(account_id,received_at,id)")
+      .order("first_seen", { ascending: false }).limit(200)),
+    must(sb.from("accounts").select("id,label,email,enabled,last_checked,last_error")),
+    sb.from("filtered").select("id", { count: "exact", head: true }).then((r) => r.count ?? 0),
+  ]);
   inboxNames = Object.fromEntries(accounts.map((a) => [a.id, a.label || a.email]));
   const watched = accounts.filter((a) => a.enabled);
   const broken = watched.filter((a) => a.last_error);
   const lastChecked = watched.map((a) => a.last_checked).filter(Boolean).sort().at(-1);
-  const tab = (v, label) => `<a href="#/?view=${v}" class="${view === v ? "on" : ""}">${label}</a>`;
-
   const maxNow = Math.max(0, ...promos.map((p) => p.id));
+
   app.innerHTML = `
   <section class="status">
     <div class="status-text">
       <span class="live" aria-hidden="true"></span>
       <div>
         <p><b>Watching ${watched.length} ${watched.length === 1 ? "inbox" : "inboxes"}</b>${broken.length ? ` <a class="bad" href="#/settings">${broken.length} need${broken.length === 1 ? "s" : ""} attention</a>` : ""}</p>
-        ${lastChecked ? `<p class="muted small">Last checked ${time(lastChecked)}</p>` : `<p class="muted small">Checks every minute</p>`}
+        <p class="muted small">${lastChecked ? `Last checked ${time(lastChecked)}` : "Checks every minute"}</p>
       </div>
     </div>
-    <button class="btn small" id="checkNow">Check now</button>
+    <a class="btn small" href="#/filtered">Filtered${filteredCount ? ` <span class="count">${filteredCount}</span>` : ""}</a>
   </section>
   ${accounts.length ? "" : `<div class="empty"><h2>Connect your first inbox</h2><p>Add the Gmail accounts you signed up to newsletters with. Promos start showing up here within a minute.</p><a class="btn primary" href="#/settings">Connect an inbox</a></div>`}
-  <div class="toolbar">
-    <div class="tabs" role="tablist">${tab("active", "Active")}${tab("starred", "Starred")}${tab("archived", "Archived")}</div>
-    <label class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="search" type="search" placeholder="Search artist, team, venue or code" autocomplete="off"></label>
-  </div>
-  <div id="feed">${promos.map(promoCard).join("") || (accounts.length ? `<div class="empty"><h2>${view === "active" ? "No promos yet" : "Nothing here"}</h2><p>${view === "active" ? "New presale codes appear here the minute they hit an inbox." : view === "starred" ? "Star a promo to keep it here." : "Promos you mark done end up here."}</p></div>` : "")}</div>`;
-  if (view === "active") seenMaxId = Math.max(seenMaxId, maxNow);
+  ${promos.length > 3 ? `<label class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="search" type="search" placeholder="Search artist, team, venue or code" autocomplete="off"></label>` : ""}
+  <div id="feed">${promos.map(promoCard).join("") || (accounts.length ? `<div class="empty"><h2>No promos yet</h2><p>New presale codes appear here the minute they hit an inbox.</p></div>` : "")}</div>`;
+  seenMaxId = Math.max(seenMaxId, maxNow);
 
-  document.getElementById("search").addEventListener("input", (e) => {
+  document.getElementById("search")?.addEventListener("input", (e) => {
     const v = e.target.value.toLowerCase().trim();
-    document.querySelectorAll(".card[data-search]").forEach((c) => (c.style.display = !v || c.dataset.search.includes(v) ? "" : "none"));
-  });
-  document.getElementById("checkNow").addEventListener("click", async (e) => {
-    busy(e.target, true, "Checking…");
-    try {
-      const r = await action("check_now");
-      if (r.skipped) toast("A check is already running — results will appear in a moment.");
-      else toast(r.errors?.length ? `Checked, with problems: ${r.errors[0]}` : `Checked ${plural(r.checked, "new email")} · ${plural(r.promos, "new promo")}`, !!r.errors?.length);
-      render();
-    } finally { busy(e.target, false); }
+    document.querySelectorAll(".ticket[data-search]").forEach((c) => (c.style.display = !v || c.dataset.search.includes(v) ? "" : "none"));
   });
 }
 
@@ -333,17 +354,15 @@ async function renderPromo(id) {
   if (!p) { location.hash = "#/"; return; }
   app.innerHTML = `
   <a class="back" href="#/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>All promos</a>
-  <article class="ticket detail ${p.starred ? "starred" : ""}" data-id="${p.id}">
+  <article class="ticket detail" data-id="${p.id}">
     <div class="t-main">
-      <div class="t-meta"><span class="src">${esc(p.sender_name || p.sender_domain)}</span>${time(p.first_seen)}</div>
+      <div class="t-meta"><span class="src">${newBadge(p.first_seen)}${esc(p.sender_name || p.sender_domain)}</span>${time(p.first_seen)}</div>
       <h1>${esc(p.title)}</h1>
       ${p.when_text ? `<p class="when"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>${esc(p.when_text)}</p>` : ""}
       <p class="muted small">From ${esc(p.sender_email)}</p>
       <div class="actions">
         ${copyAndGo(p)}
-        <div class="icons">
-          <button class="btn icon star ${p.starred ? "on" : ""}" data-star="${p.id}" title="Star" aria-label="Star"><svg viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg></button>
-        </div>
+
       </div>
     </div>
     ${stub(p, true)}
@@ -423,6 +442,7 @@ async function renderStats() {
   const cols = [...accounts].sort((x, y) => x.id - y.id);
 
   app.innerHTML = `
+  <a class="back" href="#/settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>Settings</a>
   <h1>Stats</h1>
   <p class="muted lead">How much of the action each inbox is catching. Coverage counts only promos that arrived after that inbox was connected, so newer inboxes aren't penalized.</p>
 
@@ -479,6 +499,7 @@ async function renderStats() {
 async function renderFiltered() {
   const rows = await must(sb.from("filtered").select("id,sender_name,sender_email,subject,score,reasons,received_at,accounts(label)").order("id", { ascending: false }).limit(150));
   app.innerHTML = `
+  <a class="back" href="#/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>Promos</a>
   <h1>Filtered out</h1>
   <p class="muted">Emails that came in but didn't look like promos. Tap any subject to open the full email. If one should have counted, tap <b>It's a promo</b>: it moves to your feed, and the hub learns to let that kind of email through. To teach it the other way, tap <b>✕ Not a promo</b> on any promo.</p>
   ${rows.map((r) => `
@@ -556,7 +577,13 @@ async function renderSettings() {
   const suggestedUrl = location.origin + location.pathname.replace(/index\.html$/, "");
 
   app.innerHTML = `
+  <a class="back" href="#/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>Promos</a>
   <h1>Settings</h1>
+  <a class="panel link-panel" href="#/stats">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V13h5v7M9.5 20V8h5v12M15 20v-9h5v9M3 20h18"/></svg>
+    <span><b>Stats and leaderboard</b><span class="muted small">See which inboxes are catching promos and who's missing sign-ups</span></span>
+  </a>
+  
 
   <section class="panel">
     <h2>Inboxes</h2>
@@ -791,12 +818,26 @@ document.addEventListener("click", async (e) => {
     try { await action("update_password", { account_id: Number(d.pw), password: pw }); render(); } catch { busy(t, false); }
     return;
   }
-  if (d.toggleacc) { await must(sb.from("accounts").update({ enabled: d.enabled !== "1" }).eq("id", Number(d.toggleacc))); return render(); }
+  if (d.toggleacc) {
+    const pausing = d.enabled === "1";
+    const ans = await askPin({
+      title: pausing ? "Pause this inbox?" : "Resume this inbox?",
+      note: pausing ? "It stops being checked until someone resumes it. Nothing is deleted." : "It goes back to being checked every minute.",
+      confirm: pausing ? "Pause inbox" : "Resume inbox",
+    });
+    if (!ans) return;
+    try { await action("set_account_enabled", { account_id: Number(d.toggleacc), enabled: !pausing, pin: ans.pin }); render(); } catch { /* toast already shown */ }
+    return;
+  }
   if (d.delacc) {
-    if (!confirm(`Remove ${d.email}? Its promos stay in your feed.`)) return;
-    await must(sb.from("accounts").delete().eq("id", Number(d.delacc)));
-    toast("Inbox removed");
-    return render();
+    const ans = await askPin({
+      title: `Remove ${d.email}?`,
+      note: "It stops being checked and disappears from Stats. Promos it already caught stay in the feed.",
+      confirm: "Remove inbox", danger: true, revokeFor: d.email,
+    });
+    if (!ans) return;
+    try { await action("remove_account", { account_id: Number(d.delacc), pin: ans.pin, revoke: ans.revoke }); render(); } catch { /* toast already shown */ }
+    return;
   }
   if (d.testsms) { busy(t, true, "Sending…"); try { await action("test_sms", { phone_id: Number(d.testsms) }); } finally { busy(t, false); } return; }
   if (d.togglephone) { await must(sb.from("phones").update({ enabled: d.enabled !== "1" }).eq("id", Number(d.togglephone))); return render(); }
