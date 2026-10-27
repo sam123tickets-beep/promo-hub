@@ -151,6 +151,8 @@ async function render() {
   nav.hidden = false;
   const { path, params } = route();
   currentRoute = path;
+  // Email pages get the full width of the screen.
+  app.classList.toggle("wide", path.startsWith("/promo/") || path.startsWith("/filtered/"));
   const section = path.startsWith("/promo") || path === "/" ? "promos" : path.split("/")[1];
   nav.querySelectorAll("a").forEach((a) => a.classList.toggle("on", a.dataset.nav === section));
   try {
