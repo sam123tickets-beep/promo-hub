@@ -113,6 +113,30 @@ function askNotPromo(sender) {
   });
 }
 
+// Shows the original email exactly as it was sent (safely, in a sandbox), with a plain-text switch.
+function emailViewer(html, text) {
+  const hasHtml = !!(html && html.trim());
+  const doc = `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>body{margin:12px;font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#111;background:#fff;word-wrap:break-word}
+    img{max-width:100%;height:auto}table{max-width:100%!important}</style></head><body>${html || ""}</body></html>`;
+  return `
+  <div class="mailview">
+    ${hasHtml ? `<div class="tabs small-tabs"><a href="#" class="on" data-mailtab="html">Original email</a><a href="#" data-mailtab="text">Plain text</a></div>` : ""}
+    ${hasHtml ? `<iframe class="mailframe" sandbox="allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer" srcdoc="${esc(doc)}"></iframe>` : ""}
+    <pre class="body" ${hasHtml ? "hidden" : ""}>${esc(text || "(empty email)")}</pre>
+  </div>`;
+}
+
+// One tap: copies the code AND opens the ticket link.
+function copyAndGo(p) {
+  if (!p.primary_link) return "";
+  const code = p.codes?.[0];
+  return code
+    ? `<a class="btn primary go" href="${safeUrl(p.primary_link)}" target="_blank" rel="noopener noreferrer" data-gocode="${esc(code)}">Copy ${esc(code)} &amp; get tickets ↗</a>`
+    : `<a class="btn primary go" href="${safeUrl(p.primary_link)}" target="_blank" rel="noopener noreferrer">Get tickets ↗</a>`;
+}
+
 // ---------- routing ----------
 function route() {
   const h = location.hash.replace(/^#/, "") || "/";
@@ -133,6 +157,7 @@ async function render() {
     if (path === "/") await renderPromos(params.get("view") || "active");
     else if (path.startsWith("/promo/")) await renderPromo(Number(path.split("/")[2]));
     else if (path === "/filtered") await renderFiltered();
+    else if (path.startsWith("/filtered/")) await renderFilteredEmail(Number(path.split("/")[2]));
     else if (path === "/leaderboard") await renderLeaderboard();
     else if (path === "/settings") await renderSettings();
     else location.hash = "#/";
@@ -151,7 +176,7 @@ function renderLogin() {
   }
   app.innerHTML = `
   <form class="card login" id="login">
-    <h1>Promo Hub</h1>
+    <h1>Promohub</h1>
     <label>Email<input name="email" type="email" required autocomplete="email"></label>
     <label>Password<input name="password" type="password" required minlength="8" autocomplete="current-password"></label>
     <button class="btn primary" name="signin">Sign in</button>
@@ -191,13 +216,13 @@ function startLive() {
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "promos" }, (payload) => {
       const p = payload.new;
       toast(`New promo: ${p.title}${p.codes?.length ? " — " + p.codes.join(", ") : ""}`);
-      if (document.hidden) document.title = "• New promo — Promo Hub";
+      if (document.hidden) document.title = "• New promo — Promohub";
       if (currentRoute === "/" && !document.querySelector("#search")?.value) render();
     })
     .subscribe();
 }
 function stopLive() { if (live) { sb.removeChannel(live); live = null; } }
-document.addEventListener("visibilitychange", () => { if (!document.hidden) document.title = "Promo Hub"; });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) document.title = "Promohub"; });
 
 // ---------- promos ----------
 // "Inbox: Sam" or "Inbox: Sam first · also Hank, Shlot"
@@ -222,7 +247,7 @@ function promoCard(p) {
     <div class="codes">${codes}</div>
     <p class="snippet">${esc(p.snippet)}</p>
     <div class="actions">
-      ${p.primary_link ? `<a class="btn primary" href="${safeUrl(p.primary_link)}" target="_blank" rel="noopener noreferrer">Get tickets ↗</a>` : ""}
+      ${copyAndGo(p)}
       <span class="spacer"></span>
       <button class="btn icon" data-notpromo="${p.id}" data-sender="${esc(p.sender_email || "")}" title="Not a promo" aria-label="Not a promo">✕</button>
       <button class="btn icon star ${p.starred ? "on" : ""}" data-star="${p.id}" title="Star">★</button>
@@ -286,15 +311,15 @@ async function renderPromo(id) {
     <h1>${esc(p.title)}</h1>
     ${p.when_text ? `<div class="when">${esc(p.when_text)}</div>` : ""}
     <div class="codes big">${p.codes?.length ? p.codes.map((c) => `<button class="code" data-copy="${esc(c)}">${esc(c)}<span>Copy</span></button>`).join("") : `<span class="nocode">No code found in this email</span>`}</div>
-    ${p.links?.length ? `<h3>Links</h3><ul class="links">${p.links.map((l) => `<li><a href="${safeUrl(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.text || l.url.slice(0, 60) + "…")} ↗</a></li>`).join("")}</ul>` : ""}
     <div class="actions">
-      ${p.primary_link ? `<a class="btn primary" href="${safeUrl(p.primary_link)}" target="_blank" rel="noopener noreferrer">Get tickets ↗</a>` : ""}
+      ${copyAndGo(p)}
       <button class="btn star ${p.starred ? "on" : ""}" data-star="${p.id}">★ Star</button>
       <button class="btn" id="resend">Re-send alert</button>
       <button class="btn danger" data-notpromo="${p.id}" data-sender="${esc(p.sender_email || "")}">Not a promo</button>
     </div>
+    ${p.links?.length ? `<h3>Links in this email</h3><ul class="links">${p.links.map((l) => `<li><a href="${safeUrl(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.text || l.url.slice(0, 60) + "…")} ↗</a> <button class="btn small" data-copy="${esc(l.url)}">Copy link<span></span></button></li>`).join("")}</ul>` : ""}
     <h3>Full email</h3>
-    <pre class="body">${esc(p.body_text)}</pre>
+    ${emailViewer(p.body_html, p.body_text)}
     <h3>Received in</h3>
     <ul class="plain">${seen.map((s) => `<li>${esc(s.accounts?.label || "removed inbox")} <span class="muted">${esc(s.accounts?.email || "")} · ${time(s.received_at)}</span></li>`).join("")}</ul>
     ${notes.length ? `<h3>Alerts sent</h3><ul class="plain">${notes.map((n) => `<li>${n.channel === "sms" ? "Text" : "Push"} to ${esc(n.target)} — ${n.ok ? `<span class="good">sent</span>` : `<span class="bad">failed: ${esc(n.error)}</span>`}</li>`).join("")}</ul>` : ""}
@@ -307,6 +332,22 @@ async function renderPromo(id) {
     await must(sb.from("promos").delete().eq("id", id));
     location.hash = "#/";
   };
+}
+
+async function renderFilteredEmail(id) {
+  const f = await must(sb.from("filtered").select("*, accounts(label,email)").eq("id", id).maybeSingle());
+  if (!f) { location.hash = "#/filtered"; return; }
+  const d = f.data || {};
+  app.innerHTML = `
+  <a class="back" href="#/filtered">← Filtered</a>
+  <article class="card detail">
+    <div class="meta"><span class="src">${esc(f.sender_name || f.sender_email)} &lt;${esc(f.sender_email)}&gt;</span>${time(f.received_at)}</div>
+    <h1>${esc(f.subject || "(no subject)")}</h1>
+    <p class="muted small">📥 Inbox: ${esc(f.accounts?.label || f.accounts?.email || "unknown")} · ${esc((f.reasons || []).join(", ") || "didn't look like a promo")}</p>
+    <div class="actions"><button class="btn primary" data-promote="${f.id}">It's a promo</button></div>
+    <h3>Full email</h3>
+    ${emailViewer(d.html, d.text)}
+  </article>`;
 }
 
 // ---------- leaderboard ----------
@@ -365,12 +406,12 @@ async function renderFiltered() {
   const rows = await must(sb.from("filtered").select("id,sender_name,sender_email,subject,score,reasons,received_at,accounts(label)").order("id", { ascending: false }).limit(150));
   app.innerHTML = `
   <h1>Filtered out</h1>
-  <p class="muted">Emails that came in but didn't look like promos. If one should have counted, tap <b>It's a promo</b>: it moves to your feed, and the hub learns to let that kind of email through. To teach it the other way, tap <b>✕ Not a promo</b> on any promo.</p>
+  <p class="muted">Emails that came in but didn't look like promos. Tap any subject to open the full email. If one should have counted, tap <b>It's a promo</b>: it moves to your feed, and the hub learns to let that kind of email through. To teach it the other way, tap <b>✕ Not a promo</b> on any promo.</p>
   ${rows.map((r) => `
     <div class="row">
       <div class="grow">
         <div class="meta"><span class="src">${esc(r.sender_name || r.sender_email)}</span>${time(r.received_at)}</div>
-        <div class="subject">${esc(r.subject || "(no subject)")}</div>
+        <a class="subject" href="#/filtered/${r.id}">${esc(r.subject || "(no subject)")}</a>
         <div class="muted small">${esc(r.sender_email)}${r.accounts?.label ? " · " + esc(r.accounts.label) : ""} · score ${r.score}${r.reasons?.length ? " · " + esc(r.reasons.join(", ")) : ""}</div>
       </div>
       <button class="btn small" data-promote="${r.id}">It's a promo</button>
@@ -602,6 +643,19 @@ document.addEventListener("click", async (e) => {
   if (!t) return;
   const d = t.dataset;
 
+  if (d.mailtab) {
+    e.preventDefault();
+    const box = t.closest(".mailview");
+    box.querySelectorAll("[data-mailtab]").forEach((x) => x.classList.toggle("on", x === t));
+    box.querySelector(".mailframe").hidden = d.mailtab !== "html";
+    box.querySelector("pre.body").hidden = d.mailtab !== "text";
+    return;
+  }
+  if (d.gocode) {
+    // Let the link open normally; copy at the same moment (works on phones too).
+    copyText(d.gocode).then((ok) => toast(ok ? `Copied ${d.gocode} — paste it at checkout` : `Code: ${d.gocode}`));
+    return;
+  }
   if (d.copy) {
     e.preventDefault();
     const ok = await copyText(d.copy);
