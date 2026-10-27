@@ -164,6 +164,34 @@ function copyAndGo(p) {
     : `<a class="btn primary go" href="${safeUrl(p.primary_link)}" target="_blank" rel="noopener noreferrer">Get tickets</a>`;
 }
 
+// ---------- light / dark ----------
+function currentTheme() {
+  return document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+}
+document.getElementById("themeBtn")?.addEventListener("click", () => {
+  const next = currentTheme() === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("theme", next); } catch { /* private mode: just not remembered */ }
+});
+
+// ---------- promo rail (left side, on every page except the promo list) ----------
+const rail = document.getElementById("rail");
+async function renderRail() {
+  const { data: promos } = await sb.from("promos").select("id,title,sender_name,sender_domain,codes,first_seen")
+    .order("first_seen", { ascending: false }).limit(40);
+  const openId = currentRoute.startsWith("/promo/") ? Number(currentRoute.split("/")[2]) : 0;
+  rail.innerHTML = `
+    <div class="rail-head"><a href="#/">Promos</a><span class="muted small">${promos?.length ?? 0}</span></div>
+    ${promos?.length ? `<ul class="rail-list">${promos.map((p) => `
+      <li class="rail-item ${p.id === openId ? "on" : ""}">
+        <a href="#/promo/${p.id}">
+          <span class="ri-top">${newBadge(p.first_seen)}<span class="ri-src">${esc(p.sender_name || p.sender_domain)}</span>${time(p.first_seen)}</span>
+          <span class="ri-title">${esc(p.title)}</span>
+        </a>
+        ${p.codes?.length ? `<div class="rail-codes">${p.codes.map((c) => `<button class="rail-code" data-copy="${esc(c)}" title="Copy code">${esc(c)}</button>`).join("")}</div>` : ""}
+      </li>`).join("")}</ul>` : `<p class="rail-empty">No promos yet. They'll show up here too.</p>`}`;
+}
+
 // ---------- routing ----------
 function route() {
   const h = location.hash.replace(/^#/, "") || "/";
@@ -180,6 +208,10 @@ async function render() {
   currentRoute = path;
   // Email pages get the full width of the screen.
   app.classList.toggle("wide", path.startsWith("/promo/") || path.startsWith("/filtered/"));
+  // Everywhere except the promo list itself, keep the promos visible on the left (on wide screens).
+  const showRail = path !== "/";
+  document.body.classList.toggle("has-rail", showRail);
+  if (showRail) renderRail().catch(() => {}); else rail.innerHTML = "";
   const section = path.startsWith("/promo") || path === "/" ? "promos" : path.split("/")[1];
   nav.querySelectorAll("a").forEach((a) => a.classList.toggle("on", a.dataset.nav === section));
   try {
@@ -200,6 +232,7 @@ async function render() {
 // ---------- auth ----------
 function renderLogin() {
   nav.hidden = true;
+  document.body.classList.remove("has-rail");
   if (SUPABASE_URL.includes("YOUR-PROJECT")) {
     app.innerHTML = `<div class="card login"><h1>Almost there</h1><p>Open <code>docs/config.js</code> and paste in your Supabase project URL and anon key.</p></div>`;
     return;
@@ -251,6 +284,7 @@ function startLive() {
       toast(`New promo: ${p.title}${p.codes?.length ? " — " + p.codes.join(", ") : ""}`);
       if (document.hidden) document.title = "• New promo — Promohub";
       if (currentRoute === "/" && !document.querySelector("#search")?.value) render();
+      else if (currentRoute !== "/") renderRail().catch(() => {});
     })
     .subscribe();
 }
@@ -760,6 +794,7 @@ document.addEventListener("click", async (e) => {
   if (d.copy) {
     e.preventDefault();
     const ok = await copyText(d.copy);
+    if (t.classList.contains("rail-code")) toast(ok ? `Copied ${d.copy}` : `Code: ${d.copy}`);
     const span = t.querySelector("[data-hint]") || t.querySelector("span");
     const was = span?.textContent;
     t.classList.add("copied");
