@@ -157,3 +157,8 @@ a.subject:hover { text-decoration: underline; }
 main { max-width: 960px; }
 main.wide { max-width: 1400px; }
 main.wide .mailframe { height: 85vh; }
+.brand { gap: 10px; }
+.logo-ticket { width: 34px; height: 24px; flex: none; transform: rotate(-8deg); }
+.logo-word { font-weight: 900; font-size: 21px; letter-spacing: -0.03em; color: var(--ink); }
+.logo-word span { color: var(--accent); }
+.login-logo .logo-word { font-size: 32px; }
