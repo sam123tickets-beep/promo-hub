@@ -154,3 +154,6 @@ a.subject:hover { text-decoration: underline; }
 .links .btn span:empty { display: none; }
 .card:not(.detail) .actions { flex-wrap: wrap; }
 .card .actions .btn.go { flex: 1 1 100%; justify-content: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 14px 16px; font-size: 16px; }
+main { max-width: 960px; }
+main.wide { max-width: 1400px; }
+main.wide .mailframe { height: 85vh; }
