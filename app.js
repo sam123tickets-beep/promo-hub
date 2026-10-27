@@ -178,7 +178,7 @@ function renderLogin() {
   }
   app.innerHTML = `
   <form class="card login" id="login">
-    <h1>Promohub</h1>
+    <h1 class="login-logo"><span class="logo-word">Promo<span>hub</span></span></h1>
     <label>Email<input name="email" type="email" required autocomplete="email"></label>
     <label>Password<input name="password" type="password" required minlength="8" autocomplete="current-password"></label>
     <button class="btn primary" name="signin">Sign in</button>
