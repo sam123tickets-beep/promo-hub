@@ -142,3 +142,15 @@ dialog.sheet .linkish { justify-content: center; }
 .lb details { margin-top: 8px; }
 .lb summary { cursor: pointer; list-style: none; }
 .chip.miss { border-style: dashed; color: var(--muted); }
+.mailview { margin-top: 6px; }
+.small-tabs { display: inline-flex; margin-bottom: 8px; }
+.small-tabs a { font-size: 13px; }
+.mailframe { width: 100%; height: 75vh; border: 1px solid var(--line); border-radius: 10px; background: #fff; display: block; }
+.mailview [hidden] { display: none !important; }
+a.subject { text-decoration: none; display: block; }
+a.subject:hover { text-decoration: underline; }
+.btn.go { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.links li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.links .btn span:empty { display: none; }
+.card:not(.detail) .actions { flex-wrap: wrap; }
+.card .actions .btn.go { flex: 1 1 100%; justify-content: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 14px 16px; font-size: 16px; }
