@@ -9,6 +9,7 @@ let isOwner = false;
 let live = null;
 let currentRoute = "";
 let inboxNames = {};
+let seenMaxId = 0; // newest promo already on screen; anything newer "prints" in
 
 // ---------- small helpers ----------
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -133,8 +134,8 @@ function copyAndGo(p) {
   if (!p.primary_link) return "";
   const code = p.codes?.[0];
   return code
-    ? `<a class="btn primary go" href="${safeUrl(p.primary_link)}" target="_blank" rel="noopener noreferrer" data-gocode="${esc(code)}">Copy ${esc(code)} &amp; get tickets ↗</a>`
-    : `<a class="btn primary go" href="${safeUrl(p.primary_link)}" target="_blank" rel="noopener noreferrer">Get tickets ↗</a>`;
+    ? `<a class="btn primary go" href="${safeUrl(p.primary_link)}" target="_blank" rel="noopener noreferrer" data-gocode="${esc(code)}">Copy code &amp; get tickets</a>`
+    : `<a class="btn primary go" href="${safeUrl(p.primary_link)}" target="_blank" rel="noopener noreferrer">Get tickets</a>`;
 }
 
 // ---------- routing ----------
@@ -160,7 +161,8 @@ async function render() {
     else if (path.startsWith("/promo/")) await renderPromo(Number(path.split("/")[2]));
     else if (path === "/filtered") await renderFiltered();
     else if (path.startsWith("/filtered/")) await renderFilteredEmail(Number(path.split("/")[2]));
-    else if (path === "/leaderboard") await renderLeaderboard();
+    else if (path === "/stats") await renderStats();
+    else if (path === "/leaderboard") { location.hash = "#/stats"; return; }
     else if (path === "/settings") await renderSettings();
     else location.hash = "#/";
   } catch (e) {
@@ -177,8 +179,11 @@ function renderLogin() {
     return;
   }
   app.innerHTML = `
-  <form class="card login" id="login">
-    <h1 class="login-logo"><span class="logo-word">Promo<span>hub</span></span></h1>
+  <form class="login" id="login">
+    <div class="login-head">
+      <h1 class="logo-word">Promo<span>hub</span></h1>
+      <p class="muted">Every presale code from your inboxes, in one place.</p>
+    </div>
     <label>Email<input name="email" type="email" required autocomplete="email"></label>
     <label>Password<input name="password" type="password" required minlength="8" autocomplete="current-password"></label>
     <button class="btn primary" name="signin">Sign in</button>
@@ -232,30 +237,44 @@ function inboxLine(p) {
   const seen = [...(p.seen || [])].sort((a, b) => a.id - b.id);
   const names = [...new Set(seen.map((s) => inboxNames[s.account_id] || "removed inbox"))];
   if (!names.length) return "";
-  if (names.length === 1) return `<div class="foot inbox">📥 Inbox: <b>${esc(names[0])}</b></div>`;
-  return `<div class="foot inbox">📥 <b>${esc(names[0])}</b> got it first · also ${esc(names.slice(1).join(", "))}</div>`;
+  const icon = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13l3-8h12l3 8v6H3z"/><path d="M3 13h5l1 2h6l1-2h5"/></svg>`;
+  const others = names.slice(1);
+  const rest = others.length ? `<span class="muted">, also ${esc(others.length > 1 ? others.slice(0, -1).join(", ") + " and " + others.at(-1) : others[0])}</span>` : "";
+  return `<p class="via">${icon}<span><b>${esc(names[0])}</b>${names.length > 1 ? " got it first" : "'s inbox"}${rest}</span></p>`;
+}
+
+function stub(p, big = false) {
+  if (!p.codes?.length) {
+    return `<div class="t-stub none"><span class="stub-label">No code needed</span><span class="stub-hint">The link is all you need</span></div>`;
+  }
+  return `<div class="t-stub${big ? " big" : ""}">${p.codes.map((c, i) => `
+    <button class="stubcode" data-copy="${esc(c)}" aria-label="Copy code ${esc(c)}">
+      <span class="stub-label">${i === 0 ? (p.codes.length > 1 ? "Codes" : "Code") : ""}</span>
+      <span class="stub-val">${esc(c)}</span>
+      <span class="stub-hint" data-hint="Tap to copy">Tap to copy</span>
+    </button>`).join("")}</div>`;
 }
 
 function promoCard(p) {
-  const codes = p.codes?.length
-    ? p.codes.map((c) => `<button class="code" data-copy="${esc(c)}" aria-label="Copy code ${esc(c)}">${esc(c)}<span>Copy</span></button>`).join("")
-    : `<span class="nocode">No code in this one — open the link for details</span>`;
   const search = [p.title, p.sender_name, p.sender_domain, ...(p.codes || [])].join(" ").toLowerCase();
   return `
-  <article class="card ${p.starred ? "starred" : ""}" data-id="${p.id}" data-search="${esc(search)}">
-    <div class="meta"><span class="src">${esc(p.sender_name || p.sender_domain)}</span>${time(p.first_seen)}</div>
-    <h2><a href="#/promo/${p.id}">${esc(p.title)}</a></h2>
-    ${p.when_text ? `<div class="when">${esc(p.when_text)}</div>` : ""}
-    <div class="codes">${codes}</div>
-    <p class="snippet">${esc(p.snippet)}</p>
-    <div class="actions">
-      ${copyAndGo(p)}
-      <span class="spacer"></span>
-      <button class="btn icon" data-notpromo="${p.id}" data-sender="${esc(p.sender_email || "")}" title="Not a promo" aria-label="Not a promo">✕</button>
-      <button class="btn icon star ${p.starred ? "on" : ""}" data-star="${p.id}" title="Star">★</button>
-      <button class="btn icon" data-archive="${p.id}" data-to="${p.archived ? 0 : 1}" title="${p.archived ? "Restore" : "Done — move to Archived"}" aria-label="${p.archived ? "Restore" : "Mark done"}">${p.archived ? "↩" : "✓"}</button>
+  <article class="ticket ${p.starred ? "starred" : ""} ${p.id > seenMaxId && seenMaxId ? "fresh" : ""}" data-id="${p.id}" data-search="${esc(search)}">
+    <div class="t-main">
+      <div class="t-meta"><span class="src">${esc(p.sender_name || p.sender_domain)}</span>${time(p.first_seen)}</div>
+      <h2><a href="#/promo/${p.id}">${esc(p.title)}</a></h2>
+      ${p.when_text ? `<p class="when"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>${esc(p.when_text)}</p>` : ""}
+      <p class="snippet">${esc(p.snippet)}</p>
+      <div class="actions">
+        ${copyAndGo(p)}
+        <div class="icons">
+          <button class="btn icon" data-notpromo="${p.id}" data-sender="${esc(p.sender_email || "")}" title="Not a promo" aria-label="Not a promo"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+          <button class="btn icon star ${p.starred ? "on" : ""}" data-star="${p.id}" title="Star" aria-label="Star"><svg viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg></button>
+          <button class="btn icon" data-archive="${p.id}" data-to="${p.archived ? 0 : 1}" title="${p.archived ? "Move back to Active" : "Done: move to Archived"}" aria-label="${p.archived ? "Restore" : "Mark done"}">${p.archived ? `<svg viewBox="0 0 24 24"><path d="M9 14l-5-5 5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg>` : `<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`}</button>
+        </div>
+      </div>
+      ${inboxLine(p)}
     </div>
-    ${inboxLine(p)}
+    ${stub(p)}
   </article>`;
 }
 
@@ -270,19 +289,25 @@ async function renderPromos(view) {
   const lastChecked = watched.map((a) => a.last_checked).filter(Boolean).sort().at(-1);
   const tab = (v, label) => `<a href="#/?view=${v}" class="${view === v ? "on" : ""}">${label}</a>`;
 
+  const maxNow = Math.max(0, ...promos.map((p) => p.id));
   app.innerHTML = `
   <section class="status">
-    <div><strong>${watched.length}</strong> ${watched.length === 1 ? "inbox" : "inboxes"} watched
-      ${broken.length ? `<a class="bad" href="#/settings">· ${broken.length} with problems</a>` : ""}
-      ${lastChecked ? `<span class="muted">· checked ${time(lastChecked)}</span>` : ""}</div>
+    <div class="status-text">
+      <span class="live" aria-hidden="true"></span>
+      <div>
+        <p><b>Watching ${watched.length} ${watched.length === 1 ? "inbox" : "inboxes"}</b>${broken.length ? ` <a class="bad" href="#/settings">${broken.length} need${broken.length === 1 ? "s" : ""} attention</a>` : ""}</p>
+        ${lastChecked ? `<p class="muted small">Last checked ${time(lastChecked)}</p>` : `<p class="muted small">Checks every minute</p>`}
+      </div>
+    </div>
     <button class="btn small" id="checkNow">Check now</button>
   </section>
-  ${accounts.length ? "" : `<div class="empty"><h2>No inboxes connected yet</h2><p>Add the email accounts you signed up to venue newsletters with, and promos will start showing up here.</p><a class="btn primary" href="#/settings">Connect an inbox</a></div>`}
+  ${accounts.length ? "" : `<div class="empty"><h2>Connect your first inbox</h2><p>Add the Gmail accounts you signed up to newsletters with. Promos start showing up here within a minute.</p><a class="btn primary" href="#/settings">Connect an inbox</a></div>`}
   <div class="toolbar">
-    <div class="tabs">${tab("active", "Active")}${tab("starred", "Starred")}${tab("archived", "Archived")}</div>
-    <input id="search" type="search" placeholder="Search artist, venue, code…" autocomplete="off">
+    <div class="tabs" role="tablist">${tab("active", "Active")}${tab("starred", "Starred")}${tab("archived", "Archived")}</div>
+    <label class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="search" type="search" placeholder="Search artist, team, venue or code" autocomplete="off"></label>
   </div>
-  <div id="feed">${promos.map(promoCard).join("") || (accounts.length ? `<div class="empty"><p>${view === "active" ? "Nothing yet. New promos show up here automatically." : "Nothing here."}</p></div>` : "")}</div>`;
+  <div id="feed">${promos.map(promoCard).join("") || (accounts.length ? `<div class="empty"><h2>${view === "active" ? "No promos yet" : "Nothing here"}</h2><p>${view === "active" ? "New presale codes appear here the minute they hit an inbox." : view === "starred" ? "Star a promo to keep it here." : "Promos you mark done end up here."}</p></div>` : "")}</div>`;
+  if (view === "active") seenMaxId = Math.max(seenMaxId, maxNow);
 
   document.getElementById("search").addEventListener("input", (e) => {
     const v = e.target.value.toLowerCase().trim();
@@ -307,27 +332,36 @@ async function renderPromo(id) {
   ]);
   if (!p) { location.hash = "#/"; return; }
   app.innerHTML = `
-  <a class="back" href="#/">← All promos</a>
-  <article class="card detail" data-id="${p.id}">
-    <div class="meta"><span class="src">${esc(p.sender_name || p.sender_domain)} &lt;${esc(p.sender_email)}&gt;</span>${time(p.first_seen)}</div>
-    <h1>${esc(p.title)}</h1>
-    ${p.when_text ? `<div class="when">${esc(p.when_text)}</div>` : ""}
-    <div class="codes big">${p.codes?.length ? p.codes.map((c) => `<button class="code" data-copy="${esc(c)}">${esc(c)}<span>Copy</span></button>`).join("") : `<span class="nocode">No code found in this email</span>`}</div>
-    <div class="actions">
-      ${copyAndGo(p)}
-      <button class="btn star ${p.starred ? "on" : ""}" data-star="${p.id}">★ Star</button>
-      <button class="btn" id="resend">Re-send alert</button>
-      <button class="btn danger" data-notpromo="${p.id}" data-sender="${esc(p.sender_email || "")}">Not a promo</button>
+  <a class="back" href="#/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>All promos</a>
+  <article class="ticket detail ${p.starred ? "starred" : ""}" data-id="${p.id}">
+    <div class="t-main">
+      <div class="t-meta"><span class="src">${esc(p.sender_name || p.sender_domain)}</span>${time(p.first_seen)}</div>
+      <h1>${esc(p.title)}</h1>
+      ${p.when_text ? `<p class="when"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>${esc(p.when_text)}</p>` : ""}
+      <p class="muted small">From ${esc(p.sender_email)}</p>
+      <div class="actions">
+        ${copyAndGo(p)}
+        <div class="icons">
+          <button class="btn icon star ${p.starred ? "on" : ""}" data-star="${p.id}" title="Star" aria-label="Star"><svg viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></svg></button>
+        </div>
+      </div>
     </div>
-    ${p.links?.length ? `<h3>Links in this email</h3><ul class="links">${p.links.map((l) => `<li><a href="${safeUrl(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.text || l.url.slice(0, 60) + "…")} ↗</a> <button class="btn small" data-copy="${esc(l.url)}">Copy link<span></span></button></li>`).join("")}</ul>` : ""}
+    ${stub(p, true)}
+  </article>
+  <section class="detail-body">
+    ${p.links?.length ? `<h3>Links in this email</h3><ul class="links">${p.links.map((l) => `<li><a href="${safeUrl(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.text || l.url.slice(0, 60) + "…")}</a><button class="btn small" data-copy="${esc(l.url)}"><span data-hint>Copy link</span></button></li>`).join("")}</ul>` : ""}
     <h3>Full email</h3>
     ${emailViewer(p.body_html, p.body_text)}
     <h3>Received in</h3>
-    <ul class="plain">${seen.map((s) => `<li>${esc(s.accounts?.label || "removed inbox")} <span class="muted">${esc(s.accounts?.email || "")} · ${time(s.received_at)}</span></li>`).join("")}</ul>
-    ${notes.length ? `<h3>Alerts sent</h3><ul class="plain">${notes.map((n) => `<li>${n.channel === "sms" ? "Text" : "Push"} to ${esc(n.target)} — ${n.ok ? `<span class="good">sent</span>` : `<span class="bad">failed: ${esc(n.error)}</span>`}</li>`).join("")}</ul>` : ""}
-    <p class="muted small">Why it counted as a promo: ${esc((p.reasons || []).join(", ") || "added by you")} (score ${p.score ?? "–"})</p>
-    <button class="btn danger small" id="del">Delete</button>
-  </article>`;
+    <ul class="plain">${seen.map((s) => `<li><span><b>${esc(s.accounts?.label || "Removed inbox")}</b> <span class="muted">${esc(s.accounts?.email || "")}</span></span>${time(s.received_at)}</li>`).join("")}</ul>
+    ${notes.length ? `<h3>Alerts sent</h3><ul class="plain">${notes.map((n) => `<li><span>${n.channel === "sms" ? "Text" : "Push alert"} to ${esc(n.target)}</span>${n.ok ? `<span class="good">Sent</span>` : `<span class="bad">Failed: ${esc(n.error)}</span>`}</li>`).join("")}</ul>` : ""}
+    <p class="muted small">Counted as a promo because: ${esc((p.reasons || []).join(", ") || "you added it")}.</p>
+    <div class="actions quiet">
+      <button class="btn" id="resend">Send alert again</button>
+      <button class="btn" data-notpromo="${p.id}" data-sender="${esc(p.sender_email || "")}">Not a promo</button>
+      <button class="btn danger" id="del">Delete</button>
+    </div>
+  </section>`;
   document.getElementById("resend").onclick = async (e) => { busy(e.target, true, "Sending…"); try { await action("resend", { promo_id: id }); } finally { busy(e.target, false); } render(); };
   document.getElementById("del").onclick = async () => {
     if (!confirm("Delete this promo?")) return;
@@ -341,66 +375,104 @@ async function renderFilteredEmail(id) {
   if (!f) { location.hash = "#/filtered"; return; }
   const d = f.data || {};
   app.innerHTML = `
-  <a class="back" href="#/filtered">← Filtered</a>
+  <a class="back" href="#/filtered"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>Filtered</a>
   <article class="card detail">
     <div class="meta"><span class="src">${esc(f.sender_name || f.sender_email)} &lt;${esc(f.sender_email)}&gt;</span>${time(f.received_at)}</div>
     <h1>${esc(f.subject || "(no subject)")}</h1>
-    <p class="muted small">📥 Inbox: ${esc(f.accounts?.label || f.accounts?.email || "unknown")} · ${esc((f.reasons || []).join(", ") || "didn't look like a promo")}</p>
+    <p class="muted small">Arrived in ${esc(f.accounts?.label || f.accounts?.email || "an inbox")}'s inbox. Skipped because: ${esc((f.reasons || []).join(", ") || "it didn't look like a promo")}.</p>
     <div class="actions"><button class="btn primary" data-promote="${f.id}">It's a promo</button></div>
     <h3>Full email</h3>
     ${emailViewer(d.html, d.text)}
   </article>`;
 }
 
-// ---------- leaderboard ----------
-async function renderLeaderboard() {
-  const [accounts, senders, seen] = await Promise.all([
-    must(sb.from("accounts").select("id,label,email,enabled").order("id")),
+// ---------- stats ----------
+// Per inbox: share of promos received (since it was connected), newsletters, firsts.
+// Per promo: which inboxes got it. Built to spot inboxes that never signed up.
+async function renderStats() {
+  const [accounts, senders, seen, promos] = await Promise.all([
+    must(sb.from("accounts").select("id,label,email,enabled,created_at,last_email_at").order("id")),
     must(sb.from("inbox_senders").select("*").order("emails", { ascending: false })),
-    must(sb.from("sightings").select("promo_id,account_id,id").order("id").limit(10000)),
+    must(sb.from("sightings").select("promo_id,account_id,id").order("id").limit(20000)),
+    must(sb.from("promos").select("id,title,sender_name,sender_domain,first_seen").order("first_seen", { ascending: false }).limit(500)),
   ]);
-  const firstBy = {};
-  for (const s of seen) if (!(s.promo_id in firstBy)) firstBy[s.promo_id] = s.account_id;
+  const gotBy = {};   // promo_id -> Set(account_id)
+  const firstBy = {}; // promo_id -> account_id
+  for (const s of seen) {
+    (gotBy[s.promo_id] ??= new Set()).add(s.account_id);
+    if (!(s.promo_id in firstBy)) firstBy[s.promo_id] = s.account_id;
+  }
   const allDomains = new Set(senders.map((r) => r.sender_domain));
   const rows = accounts.map((a) => {
+    const since = a.created_at || "1970-01-01";
+    const eligible = promos.filter((p) => p.first_seen >= since);
+    const got = eligible.filter((p) => gotBy[p.id]?.has(a.id)).length;
     const mine = senders.filter((r) => r.account_id === a.id);
     const have = new Set(mine.map((r) => r.sender_domain));
     return {
-      a, mine,
+      a, mine, got, eligible: eligible.length,
+      pct: eligible.length ? Math.round((got / eligible.length) * 100) : null,
       newsletters: have.size,
-      promos: new Set(seen.filter((s) => s.account_id === a.id).map((s) => s.promo_id)).size,
       first: Object.values(firstBy).filter((id) => id === a.id).length,
       missing: [...allDomains].filter((d) => !have.has(d)).sort(),
     };
-  }).sort((x, y) => y.newsletters - x.newsletters || y.promos - x.promos);
-  const medal = ["🥇", "🥈", "🥉"];
+  }).sort((x, y) => (y.pct ?? -1) - (x.pct ?? -1) || y.newsletters - x.newsletters);
+
+  const flag = (r) => r.pct === null ? "" : r.pct < 50 ? "low" : r.pct < 80 ? "mid" : "high";
+  const recent = promos.slice(0, 60);
+  const cols = [...accounts].sort((x, y) => x.id - y.id);
 
   app.innerHTML = `
-  <h1>Leaderboard</h1>
-  <p class="muted">Ranked by how many different newsletters are actually arriving in each inbox. A sign-up only counts once its first email shows up. <b>${allDomains.size}</b> different newsletters so far across all inboxes.</p>
+  <h1>Stats</h1>
+  <p class="muted lead">How much of the action each inbox is catching. Coverage counts only promos that arrived after that inbox was connected, so newer inboxes aren't penalized.</p>
+
+  <div class="stat-cards">
   ${rows.map((r, i) => `
-    <div class="panel lb">
+    <section class="panel lb ${flag(r)}">
       <div class="lb-head">
-        <div class="lb-rank">${medal[i] || "#" + (i + 1)}</div>
+        <div class="lb-rank ${i === 0 && r.pct ? "first" : ""}">${i + 1}</div>
         <div class="grow">
           <div class="lb-name">${esc(r.a.label || r.a.email)}</div>
-          <div class="muted small">${esc(r.a.email)}${r.a.enabled ? "" : " · paused"}</div>
+          <div class="muted small">${esc(r.a.email)}${r.a.enabled ? "" : " (paused)"}</div>
         </div>
+        ${r.pct !== null && r.pct < 50 ? `<span class="warn">Missing most promos</span>` : ""}
       </div>
+      <div class="meter" role="img" aria-label="${r.pct ?? 0}% of promos received"><span style="width:${r.pct ?? 0}%"></span></div>
       <div class="lb-stats">
+        <div><b>${r.pct === null ? "–" : r.pct + "%"}</b><span>${r.got} of ${r.eligible} promos</span></div>
         <div><b>${r.newsletters}</b><span>newsletters</span></div>
-        <div><b>${r.promos}</b><span>promos caught</span></div>
         <div><b>${r.first}</b><span>got it first</span></div>
       </div>
+      <p class="muted small">${r.a.last_email_at ? `Last email ${time(r.a.last_email_at)}` : "No emails yet"}</p>
       <details>
         <summary class="linkish">Newsletters arriving (${r.newsletters})</summary>
-        <div class="chips">${r.mine.map((m) => `<span class="chip" title="${m.emails} emails · ${m.promos} promos">${esc(m.sender_domain)} <span class="muted">${m.emails}</span></span>`).join("") || `<span class="muted small">None yet.</span>`}</div>
+        <div class="chips">${r.mine.map((m) => `<span class="chip" title="${m.emails} emails, ${m.promos} promos">${esc(m.sender_domain)} <span class="muted">${m.emails}</span></span>`).join("") || `<span class="muted small">None yet.</span>`}</div>
       </details>
       ${r.missing.length ? `<details>
-        <summary class="linkish">Missing ${r.missing.length} that other inboxes get</summary>
+        <summary class="linkish">Missing ${r.missing.length} newsletter${r.missing.length === 1 ? "" : "s"} other inboxes get</summary>
         <div class="chips">${r.missing.map((d) => `<span class="chip miss">${esc(d)}</span>`).join("")}</div>
       </details>` : ""}
-    </div>`).join("") || `<div class="empty"><p>Connect inboxes in Settings to start the leaderboard.</p></div>`}`;
+    </section>`).join("") || `<div class="empty"><h2>No inboxes yet</h2><p>Connect inboxes in Settings and stats start filling in as emails arrive.</p></div>`}
+  </div>
+
+  ${recent.length && cols.length ? `
+  <h2 class="section-title">Who got each promo</h2>
+  <p class="muted small">The ${recent.length} most recent promos. A dash means that inbox wasn't connected yet when the promo arrived.</p>
+  <div class="matrix-wrap">
+    <table class="matrix">
+      <thead><tr><th scope="col">Promo</th>${cols.map((a) => `<th scope="col">${esc(a.label || a.email)}</th>`).join("")}</tr></thead>
+      <tbody>${recent.map((p) => `<tr>
+        <th scope="row"><a href="#/promo/${p.id}">${esc(p.title)}</a><span class="muted">${esc(p.sender_name || p.sender_domain || "")}, ${time(p.first_seen)}</span></th>
+        ${cols.map((a) => {
+          if (a.created_at && p.first_seen < a.created_at) return `<td class="na" title="Not connected yet">–</td>`;
+          const got = gotBy[p.id]?.has(a.id);
+          const first = firstBy[p.id] === a.id;
+          return `<td class="${got ? "yes" : "no"}" title="${got ? (first ? "Got it first" : "Got it") : "Didn't get it"}">${got ? (first ? "★" : "✓") : "✗"}</td>`;
+        }).join("")}
+      </tr>`).join("")}</tbody>
+    </table>
+  </div>
+  <p class="muted small legend">★ got it first, ✓ got it, ✗ didn't get it</p>` : ""}`;
 }
 
 // ---------- filtered ----------
@@ -414,7 +486,7 @@ async function renderFiltered() {
       <div class="grow">
         <div class="meta"><span class="src">${esc(r.sender_name || r.sender_email)}</span>${time(r.received_at)}</div>
         <a class="subject" href="#/filtered/${r.id}">${esc(r.subject || "(no subject)")}</a>
-        <div class="muted small">${esc(r.sender_email)}${r.accounts?.label ? " · " + esc(r.accounts.label) : ""} · score ${r.score}${r.reasons?.length ? " · " + esc(r.reasons.join(", ")) : ""}</div>
+        <div class="muted small">${esc(r.sender_email)}${r.accounts?.label ? `, in ${esc(r.accounts.label)}'s inbox` : ""}</div>
       </div>
       <button class="btn small" data-promote="${r.id}">It's a promo</button>
     </div>`).join("") || `<div class="empty"><p>Nothing filtered yet.</p></div>`}`;
@@ -661,9 +733,10 @@ document.addEventListener("click", async (e) => {
   if (d.copy) {
     e.preventDefault();
     const ok = await copyText(d.copy);
-    const span = t.querySelector("span");
+    const span = t.querySelector("[data-hint]") || t.querySelector("span");
+    const was = span?.textContent;
     t.classList.add("copied");
-    if (span) { span.textContent = ok ? "Copied!" : "Hold to copy"; setTimeout(() => { span.textContent = "Copy"; t.classList.remove("copied"); }, 1500); }
+    if (span) { span.textContent = ok ? "Copied" : "Press and hold to copy"; setTimeout(() => { span.textContent = was; t.classList.remove("copied"); }, 1600); }
     return;
   }
   if (d.star) {
