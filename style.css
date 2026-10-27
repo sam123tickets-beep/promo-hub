@@ -1,33 +1,26 @@
 /* Promohub — box-office look: every promo is a ticket, the code lives on the tear-off stub. */
 
+/* Light by default; dark from the system setting or the toggle in the header. */
 :root {
-  --bg: #ECEAF4;          /* lilac ticket stock */
-  --surface: #FFFFFF;
-  --surface-2: #F5F3FA;
-  --ink: #1C1736;         /* deep indigo */
-  --muted: #6B6787;
-  --line: #DCD8EA;
-  --action: #3A35E6;      /* ultramarine: things you tap to go */
-  --action-ink: #FFFFFF;
-  --stub: #FFD23F;        /* marquee yellow: codes */
-  --stub-ink: #1C1736;
-  --live: #FF3D7F;        /* hot pink: new / live */
-  --good: #12805C;
-  --bad: #D2264B;
-  --star: #E9A400;
-  --focus: #3A35E6;
+  --bg: #F3F4F6; --surface: #FFFFFF; --surface-2: #EEF0F3; --ink: #16181D; --muted: #626873;
+  --line: #E1E3E8; --action: #EE5320; --action-ink: #FFFFFF; --stub: #FFD23F; --stub-ink: #16181D;
+  --live: #EE5320; --good: #12805C; --bad: #D2264B; --star: #E9A400; --focus: #EE5320;
   --r-lg: 18px; --r-md: 12px; --r-sm: 9px;
   --font: "Bricolage Grotesque", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #13102A; --surface: #1E1A3A; --surface-2: #27224A; --ink: #F2F0FB; --muted: #A29DC4;
-    --line: #342E5E; --action: #6C66FF; --action-ink: #FFFFFF; --stub: #FFD23F; --stub-ink: #1C1736;
-    --live: #FF4F8B; --good: #3CCB91; --bad: #FF6680; --star: #FFC233; --focus: #9F9BFF;
-    color-scheme: dark;
+  :root:not([data-theme="light"]) {
+    --bg: #101113; --surface: #1A1C20; --surface-2: #24272C; --ink: #F2F3F5; --muted: #9AA0AA;
+    --line: #2D3137; --action: #FF6533; --action-ink: #FFFFFF; --live: #FF6533;
+    --good: #3CCB91; --bad: #FF6680; --star: #FFC233; --focus: #FF8A5C; color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+  --bg: #101113; --surface: #1A1C20; --surface-2: #24272C; --ink: #F2F3F5; --muted: #9AA0AA;
+  --line: #2D3137; --action: #FF6533; --action-ink: #FFFFFF; --live: #FF6533;
+  --good: #3CCB91; --bad: #FF6680; --star: #FFC233; --focus: #FF8A5C; color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -306,7 +299,7 @@ details > summary.btn { margin-top: 12px; }
 .card.login h1 { font-size: 28px; }
 
 dialog.sheet { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); color: var(--ink); padding: 22px; width: min(92vw, 420px); }
-dialog.sheet::backdrop { background: rgba(10, 6, 30, .55); }
+dialog.sheet::backdrop { background: rgba(0, 0, 0, .55); }
 dialog.sheet h2 { margin-bottom: 4px; }
 dialog.sheet .btn { display: flex; width: 100%; margin-top: 10px; white-space: normal; text-align: center; overflow-wrap: anywhere; }
 
@@ -385,3 +378,47 @@ main { padding-bottom: 60px; }
   .icons { margin-left: 0; }
   .status-text a.bad { display: block; margin-left: 0; }
 }
+
+
+/* ---------- theme toggle ---------- */
+.top-right { display: flex; align-items: center; gap: 4px; }
+.theme-btn { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 999px; border: 0; background: none; color: var(--muted); cursor: pointer; }
+.theme-btn:hover { color: var(--ink); background: var(--surface); }
+.theme-btn svg { width: 21px; height: 21px; }
+.theme-btn .sun { display: none; }
+:root[data-theme="dark"] .theme-btn .sun { display: block; }
+:root[data-theme="dark"] .theme-btn .moon { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme-btn .sun { display: block; }
+  :root:not([data-theme="light"]) .theme-btn .moon { display: none; }
+}
+.logo-ticket path:first-child { fill: var(--action); }
+.logo-ticket path + path { stroke: #fff; }
+.logo-ticket text { fill: #fff; }
+
+/* ---------- promo rail: stays on the left while you look at anything else ---------- */
+#rail { display: none; }
+@media (min-width: 1100px) {
+  body.has-rail #shell { display: grid; grid-template-columns: 330px minmax(0, 1fr); }
+  body.has-rail #rail {
+    display: block; position: sticky; top: 65px; height: calc(100vh - 65px); overflow-y: auto;
+    border-right: 1px solid var(--line); padding: 16px 12px 24px; background: var(--bg);
+  }
+  body.has-rail main { max-width: none; margin: 0; padding: 20px 28px 60px; }
+  body.has-rail main:not(.wide) > * { max-width: 880px; }
+}
+.rail-head { display: flex; align-items: baseline; justify-content: space-between; padding: 0 8px 10px; }
+.rail-head a { font-weight: 800; font-size: 18px; text-decoration: none; }
+.rail-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.rail-item { border-radius: var(--r-md); border: 1px solid transparent; }
+.rail-item:hover { background: var(--surface); border-color: var(--line); }
+.rail-item.on { background: var(--surface); border-color: var(--action); }
+.rail-item > a { display: block; padding: 10px 10px 6px; text-decoration: none; }
+.ri-top { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.ri-top .ri-src { font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.ri-top .badge-new { margin: 0; font-size: 11px; padding: 1px 7px; }
+.ri-title { display: block; font-weight: 700; font-size: 14.5px; line-height: 1.3; margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.rail-codes { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 10px 10px; }
+.rail-code { border: 0; border-radius: 7px; padding: 4px 9px; background: var(--stub); color: var(--stub-ink); font: 800 13px/1.2 var(--mono); cursor: pointer; }
+.rail-code.copied { outline: 2px solid var(--good); }
+.rail-empty { padding: 10px; font-size: 14px; color: var(--muted); }
